@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Search, Activity, ChevronDown, ChevronUp, Loader2, ExternalLink } from "lucide-react";
+import { Search, Activity, ChevronDown, ChevronUp, Loader2, ExternalLink, Calendar } from "lucide-react";
 import { FIELDS } from "./data/subspecialties";
 import { getJournalMetrics } from "./data/journalMetrics";
 
@@ -100,6 +100,51 @@ function extractMeshFrequency(articles) {
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 14);
 }
 
+// Builds the list of time buckets to query, based on today's actual date.
+function buildPeriods(mode) {
+  const now = new Date();
+  const periods = [];
+  if (mode === "yearly") {
+    for (let i = 7; i >= 0; i--) {
+      const year = now.getFullYear() - i;
+      periods.push({ label: String(year), mindate: `${year}/01/01`, maxdate: `${year}/12/31` });
+    }
+  } else {
+    const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    for (let i = 17; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const year = d.getFullYear();
+      const month = d.getMonth(); // 0-indexed
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      const mm = String(month + 1).padStart(2, "0");
+      periods.push({
+        label: `${monthNames[month]} ${String(year).slice(2)}`,
+        mindate: `${year}/${mm}/01`,
+        maxdate: `${year}/${mm}/${String(lastDay).padStart(2, "0")}`,
+      });
+    }
+  }
+  return periods;
+}
+
+// Fetches a lightweight count-only result (retmax=0) per period, staggered to
+// respect NCBI's ~3 requests/second guideline for keyless requests.
+async function fetchTrendCounts(term, periods) {
+  const counts = [];
+  for (let i = 0; i < periods.length; i++) {
+    const p = periods[i];
+    const url = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=0&datetype=pdat&mindate=${p.mindate}&maxdate=${p.maxdate}&term=${encodeURIComponent(term)}`;
+    try {
+      const data = await fetchWithRetry(url, 2);
+      counts.push({ label: p.label, count: Number(data?.esearchresult?.count || 0) });
+    } catch (e) {
+      counts.push({ label: p.label, count: null });
+    }
+    if (i < periods.length - 1) await new Promise((r) => setTimeout(r, 350));
+  }
+  return counts;
+}
+
 const COLUMNS = [
   { key: "title", label: "Title", sortable: false },
   { key: "journal", label: "Journal", sortable: true },
@@ -121,6 +166,9 @@ export default function PubMedExplorer() {
   const [activeMesh, setActiveMesh] = useState(null);
   const [sortKey, setSortKey] = useState("citationCount");
   const [sortDir, setSortDir] = useState("desc");
+  const [trendMode, setTrendMode] = useState("yearly");
+  const [trendData, setTrendData] = useState([]);
+  const [trendLoading, setTrendLoading] = useState(false);
 
   const accent = activeField?.accent || "#3A6B8A";
 
@@ -148,6 +196,20 @@ export default function PubMedExplorer() {
     runSearch(FIELDS[0].subspecialties[0].query, FIELDS[0], FIELDS[0].subspecialties[0]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!activeTerm) return;
+    let cancelled = false;
+    setTrendLoading(true);
+    const periods = buildPeriods(trendMode);
+    fetchTrendCounts(activeTerm, periods).then((data) => {
+      if (!cancelled) {
+        setTrendData(data);
+        setTrendLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [activeTerm, trendMode]);
 
   const meshKeywords = useMemo(() => extractMeshFrequency(articles), [articles]);
   const maxMeshCount = meshKeywords.length ? meshKeywords[0][1] : 1;
@@ -277,6 +339,63 @@ export default function PubMedExplorer() {
             <><Activity size={13} /> {Number(totalCount || 0).toLocaleString()} total records - showing latest {articles.length}</>
           )}
         </div>
+
+        {/* Publication volume over time */}
+        <section className="mb-8">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <h2 className="plex text-xs tracking-[0.15em] uppercase flex items-center gap-2" style={{ color: "#8a8478" }}>
+              <Calendar size={13} /> Research volume over time
+            </h2>
+            <div className="flex gap-1.5">
+              {["yearly", "monthly"].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setTrendMode(m)}
+                  className="plex px-3 py-1 rounded-full border-2 text-xs font-medium capitalize"
+                  style={{
+                    borderColor: trendMode === m ? accent : "#e5e1d8",
+                    background: trendMode === m ? accent : "#ffffff",
+                    color: trendMode === m ? "#fff" : "#3d3a35",
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl" style={{ background: "#F1EDE3" }}>
+            {trendLoading ? (
+              <div className="plex-mono text-xs flex items-center gap-2 py-8 justify-center" style={{ color: "#8a8478" }}>
+                <Loader2 size={13} className="animate-spin" /> Fetching {trendMode} publication counts...
+              </div>
+            ) : trendData.length === 0 ? (
+              <p className="plex text-xs text-center py-8" style={{ color: "#8a8478" }}>No trend data available.</p>
+            ) : (
+              <div className="flex items-end gap-1 h-40 overflow-x-auto">
+                {trendData.map((d, i) => {
+                  const maxCount = Math.max(...trendData.map((x) => x.count || 0), 1);
+                  const heightPct = d.count != null ? Math.max((d.count / maxCount) * 100, 2) : 0;
+                  return (
+                    <div key={i} className="flex flex-col items-center justify-end h-full shrink-0" style={{ width: trendMode === "monthly" ? "34px" : "44px" }}>
+                      <span className="plex-mono text-[10px] mb-1" style={{ color: "#6b6660" }}>
+                        {d.count != null ? d.count.toLocaleString() : "—"}
+                      </span>
+                      <div
+                        className="w-full rounded-t-sm transition-all"
+                        style={{ height: `${heightPct}%`, background: d.count != null ? accent : "#e5e1d8", minHeight: "2px" }}
+                        title={`${d.label}: ${d.count ?? "unavailable"}`}
+                      />
+                      <span className="plex text-[10px] mt-1 rotate-0 whitespace-nowrap" style={{ color: "#8a8478" }}>
+                        {d.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
 
         {!loading && !error && meshKeywords.length > 0 && (
           <section className="mb-8">

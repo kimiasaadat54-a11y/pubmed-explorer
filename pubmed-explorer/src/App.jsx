@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { Search, Activity, ChevronDown, ChevronUp, Loader2, ExternalLink, Calendar } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Search, Activity, ChevronDown, ChevronUp, Loader2, ExternalLink, Calendar, X } from "lucide-react";
 import { FIELDS } from "./data/subspecialties";
 import { getJournalMetrics } from "./data/journalMetrics";
 
 const STOPWORDS = new Set(["and", "the", "for", "with"]);
+const POOL_SIZE = 150; // candidate articles fetched before ranking
+const DISPLAY_SIZE = 100; // top-N by hot index shown in the table
 
 async function fetchWithRetry(url, attempts = 3, parseAs = "json") {
   let lastErr;
@@ -49,11 +51,17 @@ function parseArticleXML(xmlText) {
   });
 }
 
-async function pubmedSearch(term, retmax = 25, dateFilter = null) {
+// Fetches a broad candidate pool, attaches citation + journal metrics, then
+// ranks by hot index (citations/year) and returns the top DISPLAY_SIZE.
+// NOTE: this ranks the top articles out of the most recent ~150 matches
+// within the selected period, not literally every paper ever published on
+// the topic — that keeps load times reasonable while still surfacing the
+// genuinely highest-velocity papers within that window.
+async function pubmedSearch(term, dateFilter = null) {
   const dateParams = dateFilter
     ? `&datetype=pdat&mindate=${dateFilter.mindate}&maxdate=${dateFilter.maxdate}`
     : "";
-  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&sort=date&retmax=${retmax}${dateParams}&term=${encodeURIComponent(term)}`;
+  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&sort=date&retmax=${POOL_SIZE}${dateParams}&term=${encodeURIComponent(term)}`;
   const esearchData = await fetchWithRetry(esearchUrl);
   const ids = esearchData?.esearchresult?.idlist || [];
   const totalCount = esearchData?.esearchresult?.count || "0";
@@ -73,7 +81,7 @@ async function pubmedSearch(term, retmax = 25, dateFilter = null) {
     // iCite unreachable — table still works, just without citation columns
   }
 
-  const articles = parsed.map((a) => {
+  let articles = parsed.map((a) => {
     const icite = iciteByPmid[a.pmid] || {};
     const journalMetrics = getJournalMetrics(a.journal);
     return {
@@ -85,6 +93,10 @@ async function pubmedSearch(term, retmax = 25, dateFilter = null) {
       quartile: journalMetrics?.quartile ?? null,
     };
   });
+
+  // Rank by hot index (nulls sink to the bottom), then cap to DISPLAY_SIZE
+  articles.sort((a, b) => (b.hotIndex ?? -1) - (a.hotIndex ?? -1));
+  articles = articles.slice(0, DISPLAY_SIZE);
 
   return { totalCount, articles };
 }
@@ -103,7 +115,8 @@ function extractMeshFrequency(articles) {
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 14);
 }
 
-// Builds the list of time buckets to query, based on today's actual date.
+// Time buckets for the trend chart, each carrying its own PubMed date range
+// so a bar can be clicked/dragged directly into a search filter.
 function buildPeriods(mode) {
   const now = new Date();
   const periods = [];
@@ -117,7 +130,7 @@ function buildPeriods(mode) {
     for (let i = 17; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const year = d.getFullYear();
-      const month = d.getMonth(); // 0-indexed
+      const month = d.getMonth();
       const lastDay = new Date(year, month + 1, 0).getDate();
       const mm = String(month + 1).padStart(2, "0");
       periods.push({
@@ -130,22 +143,20 @@ function buildPeriods(mode) {
   return periods;
 }
 
-// Fetches a lightweight count-only result (retmax=0) per period, staggered to
-// respect NCBI's ~3 requests/second guideline for keyless requests.
 async function fetchTrendCounts(term, periods) {
-  const counts = [];
+  const results = [];
   for (let i = 0; i < periods.length; i++) {
     const p = periods[i];
     const url = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=0&datetype=pdat&mindate=${p.mindate}&maxdate=${p.maxdate}&term=${encodeURIComponent(term)}`;
     try {
       const data = await fetchWithRetry(url, 2);
-      counts.push({ label: p.label, count: Number(data?.esearchresult?.count || 0) });
+      results.push({ ...p, count: Number(data?.esearchresult?.count || 0) });
     } catch (e) {
-      counts.push({ label: p.label, count: null });
+      results.push({ ...p, count: null });
     }
     if (i < periods.length - 1) await new Promise((r) => setTimeout(r, 350));
   }
-  return counts;
+  return results;
 }
 
 const COLUMNS = [
@@ -167,12 +178,53 @@ export default function PubMedExplorer() {
   const [articles, setArticles] = useState([]);
   const [totalCount, setTotalCount] = useState(null);
   const [activeMesh, setActiveMesh] = useState(null);
-  const [sortKey, setSortKey] = useState("citationCount");
+  const [sortKey, setSortKey] = useState("hotIndex");
   const [sortDir, setSortDir] = useState("desc");
+
   const [trendMode, setTrendMode] = useState("yearly");
   const [trendData, setTrendData] = useState([]);
   const [trendLoading, setTrendLoading] = useState(false);
-  const [yearFilter, setYearFilter] = useState("all");
+
+  // dateFilter: null (all years) or { mindate, maxdate, label }
+  const [dateFilter, setDateFilter] = useState(null);
+
+  // click-and-drag selection state for the trend chart
+  const [dragRange, setDragRange] = useState(null); // { start, end } bar indices
+  const draggingRef = useRef(false);
+  const dragRangeRef = useRef(null);
+  const trendDataRef = useRef([]);
+
+  useEffect(() => { dragRangeRef.current = dragRange; }, [dragRange]);
+  useEffect(() => { trendDataRef.current = trendData; }, [trendData]);
+
+  useEffect(() => {
+    function onWindowMouseUp() {
+      if (draggingRef.current && dragRangeRef.current) {
+        const { start, end } = dragRangeRef.current;
+        const lo = Math.min(start, end), hi = Math.max(start, end);
+        const startPeriod = trendDataRef.current[lo];
+        const endPeriod = trendDataRef.current[hi];
+        if (startPeriod && endPeriod) {
+          setDateFilter({
+            mindate: startPeriod.mindate,
+            maxdate: endPeriod.maxdate,
+            label: lo === hi ? startPeriod.label : `${startPeriod.label} \u2013 ${endPeriod.label}`,
+          });
+        }
+      }
+      draggingRef.current = false;
+    }
+    window.addEventListener("mouseup", onWindowMouseUp);
+    return () => window.removeEventListener("mouseup", onWindowMouseUp);
+  }, []);
+
+  const handleBarMouseDown = (i) => {
+    draggingRef.current = true;
+    setDragRange({ start: i, end: i });
+  };
+  const handleBarMouseEnter = (i) => {
+    if (draggingRef.current) setDragRange((prev) => (prev ? { ...prev, end: i } : { start: i, end: i }));
+  };
 
   const accent = activeField?.accent || "#3A6B8A";
 
@@ -183,9 +235,8 @@ export default function PubMedExplorer() {
     setActiveField(field || null);
     setActiveSub(sub || null);
     setActiveTerm(term);
-    const dateFilter = yearFilter !== "all" ? { mindate: `${yearFilter}/01/01`, maxdate: `${yearFilter}/12/31` } : null;
     try {
-      const { totalCount, articles } = await pubmedSearch(term, 25, dateFilter);
+      const { totalCount, articles } = await pubmedSearch(term, dateFilter);
       setArticles(articles);
       setTotalCount(totalCount);
     } catch (e) {
@@ -195,14 +246,14 @@ export default function PubMedExplorer() {
     } finally {
       setLoading(false);
     }
-  }, [yearFilter]);
+  }, [dateFilter]);
 
-  // Initial load, and re-run whenever the year filter changes (using whatever
-  // field/subspecialty/custom term is currently active).
+  // Initial load, and re-run whenever the date filter changes (year dropdown
+  // or a click-drag selection on the trend chart).
   useEffect(() => {
     runSearch(activeTerm, activeField, activeSub);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [yearFilter]);
+  }, [dateFilter]);
 
   useEffect(() => {
     if (!activeTerm) return;
@@ -255,6 +306,8 @@ export default function PubMedExplorer() {
     runSearch(term, null, null);
   };
 
+  const yearDropdownValue = dateFilter && /^\d{4}$/.test(dateFilter.label) ? dateFilter.label : "all";
+
   return (
     <div className="min-h-screen" style={{ background: "#FAF8F4", fontFamily: "'Source Serif 4', Georgia, serif" }}>
       <style>{`
@@ -272,7 +325,7 @@ export default function PubMedExplorer() {
             Literature Compass
           </h1>
           <p className="plex text-sm mt-2" style={{ color: "#6b6660" }}>
-            Real PubMed records, real MeSH-indexed topics, real NIH iCite citation data. SJR journal metric shown where known.
+            Real PubMed records, MeSH-indexed topics, NIH iCite citation data. Top {DISPLAY_SIZE} articles ranked by hot index.
           </p>
         </div>
       </header>
@@ -318,7 +371,7 @@ export default function PubMedExplorer() {
               ))}
             </div>
 
-            <form onSubmit={handleCustomSearch} className="mt-4 flex gap-2 max-w-lg flex-wrap">
+            <form onSubmit={handleCustomSearch} className="mt-4 flex gap-2 max-w-lg flex-wrap items-center">
               <div className="relative flex-1 min-w-[200px]">
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "#9a948a" }} />
                 <input
@@ -334,8 +387,8 @@ export default function PubMedExplorer() {
                 Search
               </button>
               <select
-                value={yearFilter}
-                onChange={(e) => setYearFilter(e.target.value)}
+                value={yearDropdownValue}
+                onChange={(e) => setDateFilter(e.target.value === "all" ? null : { mindate: `${e.target.value}/01/01`, maxdate: `${e.target.value}/12/31`, label: e.target.value })}
                 className="plex px-3 py-2.5 rounded-lg border-2 text-sm outline-none"
                 style={{ borderColor: "#e5e1d8", color: "#2A2823", background: "#fff" }}
               >
@@ -345,6 +398,15 @@ export default function PubMedExplorer() {
                 ))}
               </select>
             </form>
+
+            {dateFilter && (
+              <div className="flex items-center gap-2 plex text-xs mt-2" style={{ color: accent }}>
+                <span>Filtered to: <strong>{dateFilter.label}</strong></span>
+                <button onClick={() => setDateFilter(null)} className="inline-flex items-center gap-0.5 underline">
+                  <X size={11} /> clear
+                </button>
+              </div>
+            )}
           </section>
         )}
 
@@ -354,13 +416,14 @@ export default function PubMedExplorer() {
           ) : error ? (
             <span style={{ color: "#B4433A" }}>{error}</span>
           ) : (
-            <><Activity size={13} /> {Number(totalCount || 0).toLocaleString()} total records - showing latest {articles.length}</>
+            <><Activity size={13} /> {Number(totalCount || 0).toLocaleString()} total records match {"\u00b7"} showing top {articles.length} by hot index</>
           )}
         </div>
 
-        {/* Publication volume over time */}
+        {/* Publication volume over time — click a bar, or click-and-drag across
+            several, to filter the article table to that exact period. */}
         <section className="mb-8">
-          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
             <h2 className="plex text-xs tracking-[0.15em] uppercase flex items-center gap-2" style={{ color: "#8a8478" }}>
               <Calendar size={13} /> Research volume over time
             </h2>
@@ -381,6 +444,9 @@ export default function PubMedExplorer() {
               ))}
             </div>
           </div>
+          <p className="plex text-[11px] mb-3" style={{ color: "#9a948a" }}>
+            Click a bar, or click-and-drag across several, to filter the results below to that period.
+          </p>
 
           <div className="p-4 rounded-xl" style={{ background: "#F1EDE3" }}>
             {trendLoading ? (
@@ -390,21 +456,29 @@ export default function PubMedExplorer() {
             ) : trendData.length === 0 ? (
               <p className="plex text-xs text-center py-8" style={{ color: "#8a8478" }}>No trend data available.</p>
             ) : (
-              <div className="flex items-end gap-1 h-40 overflow-x-auto">
+              <div className="flex items-end gap-1 h-40 overflow-x-auto select-none" style={{ userSelect: "none" }}>
                 {trendData.map((d, i) => {
                   const maxCount = Math.max(...trendData.map((x) => x.count || 0), 1);
                   const heightPct = d.count != null ? Math.max((d.count / maxCount) * 100, 2) : 0;
+                  const inDragRange = dragRange && i >= Math.min(dragRange.start, dragRange.end) && i <= Math.max(dragRange.start, dragRange.end);
+                  const barColor = inDragRange ? accent : (d.count != null ? `${accent}99` : "#e5e1d8");
                   return (
-                    <div key={i} className="flex flex-col items-center justify-end h-full shrink-0" style={{ width: trendMode === "monthly" ? "34px" : "44px" }}>
+                    <div
+                      key={i}
+                      onMouseDown={() => handleBarMouseDown(i)}
+                      onMouseEnter={() => handleBarMouseEnter(i)}
+                      className="flex flex-col items-center justify-end h-full shrink-0 cursor-pointer"
+                      style={{ width: trendMode === "monthly" ? "34px" : "44px" }}
+                    >
                       <span className="plex-mono text-[10px] mb-1" style={{ color: "#6b6660" }}>
-                        {d.count != null ? d.count.toLocaleString() : "—"}
+                        {d.count != null ? d.count.toLocaleString() : "\u2014"}
                       </span>
                       <div
-                        className="w-full rounded-t-sm transition-all"
-                        style={{ height: `${heightPct}%`, background: d.count != null ? accent : "#e5e1d8", minHeight: "2px" }}
-                        title={`${d.label}: ${d.count ?? "unavailable"}`}
+                        className="w-full rounded-t-sm transition-colors"
+                        style={{ height: `${heightPct}%`, background: barColor, minHeight: "2px" }}
+                        title={`${d.label}: ${d.count ?? "unavailable"} (click or drag to filter)`}
                       />
-                      <span className="plex text-[10px] mt-1 rotate-0 whitespace-nowrap" style={{ color: "#8a8478" }}>
+                      <span className="plex text-[10px] mt-1 whitespace-nowrap" style={{ color: "#8a8478" }}>
                         {d.label}
                       </span>
                     </div>
@@ -431,7 +505,7 @@ export default function PubMedExplorer() {
                     style={{ fontSize: `${scale}rem`, borderColor: active ? accent : "transparent", background: active ? `${accent}1a` : "#fff", color: active ? accent : "#3d3a35" }}
                     className="px-3 py-1.5 rounded-full border-2 font-medium"
                   >
-                    {term} <span className="opacity-50 text-xs">.{count}</span>
+                    {term} <span className="opacity-50 text-xs">{"\u00b7"}{count}</span>
                   </button>
                 );
               })}
@@ -468,11 +542,11 @@ export default function PubMedExplorer() {
                       </a>
                     </td>
                     <td className="py-3 px-2 text-xs" style={{ color: "#6b6660" }}>{a.journal}</td>
-                    <td className="py-3 px-2 text-xs">{a.year || "-"}</td>
-                    <td className="py-3 px-2 text-xs">{a.citationCount ?? "-"}</td>
-                    <td className="py-3 px-2 text-xs">{a.hotIndex ?? "-"}</td>
+                    <td className="py-3 px-2 text-xs">{a.year || "\u2014"}</td>
+                    <td className="py-3 px-2 text-xs">{a.citationCount ?? "\u2014"}</td>
+                    <td className="py-3 px-2 text-xs">{a.hotIndex ?? "\u2014"}</td>
                     <td className="py-3 px-2 text-xs">
-                      {a.sjr != null ? `${a.sjr} (${a.quartile})` : "-"}
+                      {a.sjr != null ? `${a.sjr} (${a.quartile})` : "\u2014"}
                     </td>
                   </tr>
                 ))}
@@ -487,7 +561,7 @@ export default function PubMedExplorer() {
       </main>
 
       <footer className="max-w-6xl mx-auto px-6 py-10 mt-6 border-t plex text-xs" style={{ borderColor: "#e5e1d8", color: "#9a948a" }}>
-        Data: PubMed/MEDLINE (NCBI E-utilities), MeSH indexing (NLM), citation metrics (NIH iCite), journal SJR (SCImago, starter dataset). SJR shows "-" for journals not yet added to the local lookup table.
+        Data: PubMed/MEDLINE (NCBI E-utilities), MeSH indexing (NLM), citation metrics (NIH iCite), journal SJR (SCImago, starter dataset). Table ranks a pool of up to {POOL_SIZE} recent matching articles by hot index and shows the top {DISPLAY_SIZE}.
       </footer>
     </div>
   );

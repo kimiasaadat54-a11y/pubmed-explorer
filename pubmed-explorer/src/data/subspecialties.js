@@ -1,1 +1,121 @@
 
+// Subspecialty taxonomy — grounded in ACGME + international (ESC, Royal College, etc.)
+// fellowship/board structures. This is a STARTER set — add more by pushing new
+// { key, label, query } objects into any field's `subspecialties` array below.
+//
+// `query` is a real PubMed search string. Pattern used throughout:
+//   (keyword[Title/Abstract] OR "MeSH Descriptor"[MeSH Terms])
+// The OR keeps results flowing even if a MeSH descriptor name is slightly off,
+// since PubMed just returns zero for that one clause rather than erroring.
+
+export const FIELDS = [
+  {
+    key: "cardiology",
+    label: "Cardiology",
+    accent: "#B4433A",
+    subspecialties: [
+      { key: "interventional", label: "Interventional Cardiology", query: '(interventional cardiology[Title/Abstract] OR "percutaneous coronary intervention"[MeSH Terms] OR angioplasty[Title/Abstract])' },
+      { key: "ep", label: "Clinical Cardiac Electrophysiology", query: '(electrophysiology[Title/Abstract] OR "arrhythmias, cardiac"[MeSH Terms] OR ablation[Title/Abstract])' },
+      { key: "heartfailure", label: "Advanced Heart Failure & Transplant", query: '("heart failure"[MeSH Terms] OR "heart transplantation"[MeSH Terms])' },
+      { key: "achd", label: "Adult Congenital Heart Disease", query: '("heart defects, congenital"[MeSH Terms] AND adult[Title/Abstract])' },
+      { key: "imaging", label: "Cardiac Imaging", query: '(echocardiography[MeSH Terms] OR "cardiac MRI"[Title/Abstract] OR "cardiac CT"[Title/Abstract])' },
+      { key: "preventive", label: "Preventive & Cardiometabolic", query: '("cardiovascular diseases/prevention and control"[MeSH Terms] OR cardiometabolic[Title/Abstract])' },
+      { key: "structural", label: "Structural Heart Disease", query: '("structural heart disease"[Title/Abstract] OR TAVR[Title/Abstract] OR "heart valve prosthesis"[MeSH Terms])' },
+      { key: "pulmhtn", label: "Pulmonary Hypertension", query: '"hypertension, pulmonary"[MeSH Terms]' },
+      { key: "cardioonc", label: "Cardio-Oncology", query: '(cardio-oncology[Title/Abstract] OR "cardiotoxicity"[Title/Abstract])' },
+      { key: "sportscardio", label: "Sports Cardiology", query: '("athletic heart"[Title/Abstract] OR "sports cardiology"[Title/Abstract])' },
+    ],
+  },
+  {
+    key: "oncology",
+    label: "Oncology",
+    accent: "#6B5B95",
+    subspecialties: [
+      { key: "medonc", label: "Medical Oncology", query: '"medical oncology"[MeSH Terms]' },
+      { key: "surgonc", label: "Surgical Oncology", query: '"surgical oncology"[Title/Abstract]' },
+      { key: "radonc", label: "Radiation Oncology", query: '"radiotherapy"[MeSH Terms]' },
+      { key: "hemeonc", label: "Hematologic Malignancies", query: '("leukemia"[MeSH Terms] OR "lymphoma"[MeSH Terms])' },
+      { key: "breast", label: "Breast Cancer", query: '"breast neoplasms"[MeSH Terms]' },
+      { key: "gi", label: "GI / Colorectal Cancer", query: '("colorectal neoplasms"[MeSH Terms] OR "gastrointestinal neoplasms"[MeSH Terms])' },
+      { key: "thoracic", label: "Thoracic / Lung Cancer", query: '"lung neoplasms"[MeSH Terms]' },
+      { key: "gu", label: "Genitourinary Cancer", query: '("prostatic neoplasms"[MeSH Terms] OR "urologic neoplasms"[MeSH Terms])' },
+      { key: "gyn", label: "Gynecologic Oncology", query: '"genital neoplasms, female"[MeSH Terms]' },
+      { key: "headneck", label: "Head & Neck Cancer", query: '"head and neck neoplasms"[MeSH Terms]' },
+      { key: "neuroonc", label: "Neuro-Oncology", query: '"brain neoplasms"[MeSH Terms]' },
+      { key: "sarcoma", label: "Sarcoma", query: '"sarcoma"[MeSH Terms]' },
+      { key: "palliative", label: "Palliative & Supportive Oncology", query: '("palliative care"[MeSH Terms] AND cancer[Title/Abstract])' },
+      { key: "immunoonc", label: "Immuno-Oncology", query: '(immunotherapy[Title/Abstract] AND neoplasms[Title/Abstract])' },
+    ],
+  },
+  {
+    key: "neurology",
+    label: "Neurology",
+    accent: "#3A6B8A",
+    subspecialties: [
+      { key: "stroke", label: "Vascular Neurology / Stroke", query: '"stroke"[MeSH Terms]' },
+      { key: "epilepsy", label: "Epilepsy", query: '"epilepsy"[MeSH Terms]' },
+      { key: "movement", label: "Movement Disorders", query: '("parkinson disease"[MeSH Terms] OR "movement disorders"[MeSH Terms])' },
+      { key: "neuromuscular", label: "Neuromuscular Disease", query: '"neuromuscular diseases"[MeSH Terms]' },
+      { key: "neuroonc2", label: "Neuro-Oncology", query: '("central nervous system neoplasms"[MeSH Terms])' },
+      { key: "headache", label: "Headache Medicine", query: '"headache disorders"[MeSH Terms]' },
+      { key: "ms", label: "Multiple Sclerosis / Neuroimmunology", query: '"multiple sclerosis"[MeSH Terms]' },
+      { key: "neurocrit", label: "Neurocritical Care", query: '"neurocritical care"[Title/Abstract]' },
+      { key: "neuroophth", label: "Neuro-Ophthalmology", query: '"neuro-ophthalmology"[Title/Abstract]' },
+      { key: "sleep", label: "Sleep Neurology", query: '"sleep wake disorders"[MeSH Terms]' },
+      { key: "dementia", label: "Behavioral Neurology / Dementia", query: '"dementia"[MeSH Terms]' },
+      { key: "autonomic", label: "Autonomic Disorders", query: '"autonomic nervous system diseases"[MeSH Terms]' },
+    ],
+  },
+  {
+    key: "orthopedics",
+    label: "Orthopedics",
+    accent: "#8A7355",
+    subspecialties: [
+      { key: "sportsmed", label: "Sports Medicine", query: '"athletic injuries"[MeSH Terms]' },
+      { key: "joint", label: "Joint Reconstruction (Hip & Knee)", query: '("arthroplasty, replacement, hip"[MeSH Terms] OR "arthroplasty, replacement, knee"[MeSH Terms])' },
+      { key: "spine", label: "Spine Surgery", query: '"spinal fusion"[MeSH Terms]' },
+      { key: "hand", label: "Hand & Upper Extremity", query: '"hand injuries"[MeSH Terms]' },
+      { key: "shoulder", label: "Shoulder & Elbow Surgery", query: '"shoulder joint"[MeSH Terms]' },
+      { key: "footankle", label: "Foot & Ankle", query: '("foot injuries"[MeSH Terms] OR "ankle injuries"[MeSH Terms])' },
+      { key: "pedsortho", label: "Pediatric Orthopedics", query: '(orthopedics[Title/Abstract] AND pediatric[Title/Abstract])' },
+      { key: "trauma", label: "Orthopedic Trauma", query: '"fractures, bone"[MeSH Terms]' },
+      { key: "msonc", label: "Musculoskeletal Oncology", query: '"bone neoplasms"[MeSH Terms]' },
+    ],
+  },
+  {
+    key: "pediatrics",
+    label: "Pediatrics",
+    accent: "#4A8A6B",
+    subspecialties: [
+      { key: "neonatology", label: "Neonatology", query: '"infant, newborn"[MeSH Terms]' },
+      { key: "pedcardio", label: "Pediatric Cardiology", query: '(pediatric[Title/Abstract] AND "heart diseases"[MeSH Terms])' },
+      { key: "pedonc", label: "Pediatric Oncology", query: '(pediatric[Title/Abstract] AND neoplasms[Title/Abstract])' },
+      { key: "pedneuro", label: "Pediatric Neurology", query: '(pediatric[Title/Abstract] AND "nervous system diseases"[MeSH Terms])' },
+      { key: "pedid", label: "Pediatric Infectious Disease", query: '(pediatric[Title/Abstract] AND "communicable diseases"[MeSH Terms])' },
+      { key: "pedpulm", label: "Pediatric Pulmonology", query: '(pediatric[Title/Abstract] AND "respiratory tract diseases"[MeSH Terms])' },
+      { key: "pedendo", label: "Pediatric Endocrinology", query: '(pediatric[Title/Abstract] AND "endocrine system diseases"[MeSH Terms])' },
+      { key: "pednephro", label: "Pediatric Nephrology", query: '(pediatric[Title/Abstract] AND "kidney diseases"[MeSH Terms])' },
+      { key: "pedgi", label: "Pediatric Gastroenterology", query: '(pediatric[Title/Abstract] AND "gastrointestinal diseases"[MeSH Terms])' },
+      { key: "pedrheum", label: "Pediatric Rheumatology", query: '(pediatric[Title/Abstract] AND "rheumatic diseases"[MeSH Terms])' },
+      { key: "pedcc", label: "Pediatric Critical Care", query: '(pediatric[Title/Abstract] AND "critical care"[MeSH Terms])' },
+      { key: "pedem", label: "Pediatric Emergency Medicine", query: '(pediatric[Title/Abstract] AND "emergency medicine"[MeSH Terms])' },
+      { key: "devbehav", label: "Developmental & Behavioral Pediatrics", query: '"child development"[MeSH Terms]' },
+      { key: "adolescent", label: "Adolescent Medicine", query: '"adolescent medicine"[MeSH Terms]' },
+    ],
+  },
+  {
+    key: "immunology",
+    label: "Immunology",
+    accent: "#8A5A3A",
+    subspecialties: [
+      { key: "allergy", label: "Clinical / Allergy Immunology", query: '"hypersensitivity"[MeSH Terms]' },
+      { key: "autoimmune", label: "Autoimmune & Rheumatologic Disease", query: '"autoimmune diseases"[MeSH Terms]' },
+      { key: "pid", label: "Primary Immunodeficiency", query: '"immunologic deficiency syndromes"[MeSH Terms]' },
+      { key: "transplantimm", label: "Transplant Immunology", query: '"graft rejection"[MeSH Terms]' },
+      { key: "tumorimm", label: "Tumor Immunology / Immuno-Oncology", query: '"tumor immunology"[MeSH Terms]' },
+      { key: "vaccine", label: "Vaccine Immunology", query: '"vaccines"[MeSH Terms]' },
+      { key: "mucosal", label: "Mucosal Immunology", query: '"mucosal immunology"[Title/Abstract]' },
+      { key: "immunogenetics", label: "Immunogenetics", query: '"immunogenetics"[MeSH Terms]' },
+    ],
+  },
+];

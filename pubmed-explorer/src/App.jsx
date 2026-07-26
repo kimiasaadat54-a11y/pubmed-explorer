@@ -49,8 +49,11 @@ function parseArticleXML(xmlText) {
   });
 }
 
-async function pubmedSearch(term, retmax = 25) {
-  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&sort=date&retmax=${retmax}&term=${encodeURIComponent(term)}`;
+async function pubmedSearch(term, retmax = 25, dateFilter = null) {
+  const dateParams = dateFilter
+    ? `&datetype=pdat&mindate=${dateFilter.mindate}&maxdate=${dateFilter.maxdate}`
+    : "";
+  const esearchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&sort=date&retmax=${retmax}${dateParams}&term=${encodeURIComponent(term)}`;
   const esearchData = await fetchWithRetry(esearchUrl);
   const ids = esearchData?.esearchresult?.idlist || [];
   const totalCount = esearchData?.esearchresult?.count || "0";
@@ -169,6 +172,7 @@ export default function PubMedExplorer() {
   const [trendMode, setTrendMode] = useState("yearly");
   const [trendData, setTrendData] = useState([]);
   const [trendLoading, setTrendLoading] = useState(false);
+  const [yearFilter, setYearFilter] = useState("all");
 
   const accent = activeField?.accent || "#3A6B8A";
 
@@ -179,8 +183,9 @@ export default function PubMedExplorer() {
     setActiveField(field || null);
     setActiveSub(sub || null);
     setActiveTerm(term);
+    const dateFilter = yearFilter !== "all" ? { mindate: `${yearFilter}/01/01`, maxdate: `${yearFilter}/12/31` } : null;
     try {
-      const { totalCount, articles } = await pubmedSearch(term, 25);
+      const { totalCount, articles } = await pubmedSearch(term, 25, dateFilter);
       setArticles(articles);
       setTotalCount(totalCount);
     } catch (e) {
@@ -190,12 +195,14 @@ export default function PubMedExplorer() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [yearFilter]);
 
+  // Initial load, and re-run whenever the year filter changes (using whatever
+  // field/subspecialty/custom term is currently active).
   useEffect(() => {
-    runSearch(FIELDS[0].subspecialties[0].query, FIELDS[0], FIELDS[0].subspecialties[0]);
+    runSearch(activeTerm, activeField, activeSub);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [yearFilter]);
 
   useEffect(() => {
     if (!activeTerm) return;
@@ -311,8 +318,8 @@ export default function PubMedExplorer() {
               ))}
             </div>
 
-            <form onSubmit={handleCustomSearch} className="mt-4 flex gap-2 max-w-md">
-              <div className="relative flex-1">
+            <form onSubmit={handleCustomSearch} className="mt-4 flex gap-2 max-w-lg flex-wrap">
+              <div className="relative flex-1 min-w-[200px]">
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "#9a948a" }} />
                 <input
                   type="text"
@@ -326,6 +333,17 @@ export default function PubMedExplorer() {
               <button type="submit" className="plex px-4 py-2.5 rounded-lg text-sm font-semibold text-white" style={{ background: "#2A2823" }}>
                 Search
               </button>
+              <select
+                value={yearFilter}
+                onChange={(e) => setYearFilter(e.target.value)}
+                className="plex px-3 py-2.5 rounded-lg border-2 text-sm outline-none"
+                style={{ borderColor: "#e5e1d8", color: "#2A2823", background: "#fff" }}
+              >
+                <option value="all">All years</option>
+                {Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i).map((y) => (
+                  <option key={y} value={y}>{y} only</option>
+                ))}
+              </select>
             </form>
           </section>
         )}

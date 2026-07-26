@@ -4,7 +4,7 @@ import { FIELDS } from "./data/subspecialties";
 import { getJournalMetrics } from "./data/journalMetrics";
 
 const STOPWORDS = new Set(["and", "the", "for", "with"]);
-const RESULT_CAP = 1000; // practical cap on articles fetched/shown per search
+const RESULT_CAP = 500; // practical cap on articles fetched/shown per search
 
 function pad(n) { return String(n).padStart(2, "0"); }
 function fmtDate(d) { return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`; }
